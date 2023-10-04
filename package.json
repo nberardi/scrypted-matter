@@ -1,0 +1,51 @@
+{
+  "name": "scrypted-matter",
+  "version": "0.1.0",
+  "description": "Scrypted plugin for Matter",
+  "author": "nberardi",
+  "license": "MIT",
+  "scripts": {
+    "scrypted-setup-project": "scrypted-setup-project",
+    "prescrypted-setup-project": "scrypted-package-json",
+    "build": "scrypted-webpack",
+    "prepublishOnly": "NODE_ENV=production scrypted-webpack",
+    "prescrypted-vscode-launch": "scrypted-webpack",
+    "scrypted-vscode-launch": "scrypted-deploy-debug",
+    "scrypted-deploy-debug": "scrypted-deploy-debug",
+    "scrypted-debug": "scrypted-debug",
+    "scrypted-deploy": "scrypted-deploy",
+    "scrypted-readme": "scrypted-readme",
+    "scrypted-package-json": "scrypted-package-json",
+    "scrypted-webpack": "scrypted-webpack"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nberardi/scrypted-matter.git"
+  },
+  "keywords": [
+    "scrypted",
+    "plugin",
+    "matter",
+    "chip"
+  ],
+  "bugs": {
+    "url": "https://github.com/nberardi/scrypted-matter/issues"
+  },
+  "homepage": "https://github.com/nberardi/scrypted-matter#readme",
+  "scrypted": {
+    "name": "Matter",
+    "type": "API",
+    "interfaces": [
+      "MixinProvider",
+      "Settings"
+    ]
+  },
+  "dependencies": {
+    "@project-chip/matter-node.js": "^0.5.0"
+  },
+  "devDependencies": {
+    "@scrypted/sdk": "^0.2.103",
+    "@types/node": "^18.4.2",
+    "webpack-bundle-analyzer": "^4.5.0"
+  }
+}
