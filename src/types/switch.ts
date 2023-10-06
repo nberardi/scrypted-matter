@@ -1,7 +1,7 @@
 import { EventDetails, OnOff, ScryptedDevice, ScryptedDeviceType, ScryptedInterface } from "@scrypted/sdk";
 import { Device, OnOffPluginUnitDevice } from '@project-chip/matter.js/device';
 
-import { supportedTypes } from ".";
+import { EventStatus, supportedTypes } from ".";
 
 supportedTypes.set(ScryptedDeviceType.Switch, {
     async discover(device: ScryptedDevice & OnOff): Promise<Device> {
@@ -20,7 +20,16 @@ supportedTypes.set(ScryptedDeviceType.Switch, {
         return d;
     },
 
-    sendEvent(device: ScryptedDevice, eventDetails: EventDetails, eventData: any): Promise<void> {
-        return;
-    }
+    async sendEvent(device: ScryptedDevice & OnOff, eventDetails: EventDetails, eventData: any): Promise<EventStatus> {
+        if (eventDetails.eventInterface !== ScryptedInterface.OnOff)
+            return EventStatus.NotSupported;
+
+        if (eventData)
+            await device.turnOn();
+        else
+            await device.turnOff();
+
+        return EventStatus.Handled;
+    },
+    
 });

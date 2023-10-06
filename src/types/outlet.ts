@@ -1,14 +1,14 @@
 import { EventDetails, OnOff, ScryptedDevice, ScryptedDeviceType, ScryptedInterface } from "@scrypted/sdk";
-import { Device, OnOffLightDevice } from '@project-chip/matter.js/device';
+import { Device, OnOffPluginUnitDevice } from '@project-chip/matter.js/device';
 
 import { EventStatus, supportedTypes } from ".";
 
-supportedTypes.set(ScryptedDeviceType.Light, {
+supportedTypes.set(ScryptedDeviceType.Outlet, {
     async discover(device: ScryptedDevice & OnOff): Promise<Device> {
         if (!device.interfaces.includes(ScryptedInterface.OnOff))
             return;
 
-        const d = new OnOffLightDevice();
+        const d = new OnOffPluginUnitDevice();
 
         d.addOnOffListener(on => {
             if (on)
@@ -31,4 +31,5 @@ supportedTypes.set(ScryptedDeviceType.Light, {
 
         return EventStatus.Handled;
     },
+    
 });

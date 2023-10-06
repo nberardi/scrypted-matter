@@ -1,6 +1,6 @@
-import sdk, { MixinProvider, ScryptedDevice, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, EventDetails, Setting, SettingValue, Settings } from '@scrypted/sdk';
+import sdk, { MixinProvider, ScryptedDevice, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, EventDetails, Setting, SettingValue, Settings, DeviceProvider } from '@scrypted/sdk';
 import { StorageSettings } from '@scrypted/sdk/storage-settings';
-import { supportedTypes } from './types';
+import { EventStatus, supportedTypes } from './types';
 
 import { CommissioningServer, MatterServer } from "@project-chip/matter-node.js";
 
@@ -45,37 +45,49 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
             hide: true,
             json: true
         },
+        qrPairingCode: {
+            title: "QR Pairing Code",
+            type: 'qrcode',
+            readonly: true,
+            description: "Scan with your phones camera to pair this Scrypted with Matter.",
+        },
+        manualPairingCode: {
+            title: "Manual Pairing Code",
+            description: "This is the pairing code that you can use to pair this Scrypted with Matter.",
+            readonly: true,
+            type: 'string',
+        },
         passcode: {
             title: 'Passcode',
             description: 'This is the passcode used to connect to the Matter bridge.',
             type: 'number',
-            defaultValue: 20202021
+            persistedDefaultValue: 20202021
         },
         discriminator: {
             title: 'Discriminator',
             description: 'TBD',
             type: 'number',
-            defaultValue: 3840
+            persistedDefaultValue: 3840
         },
         vendorId: {
             title: 'Vendor Id',
             description: 'TBD',
             readonly: true,
             type: 'number',
-            defaultValue: 0xfff1
+            persistedDefaultValue: 0xfff1
         },
         productId: {
             title: 'Product Id',
             description: 'TBD',
             readonly: true,
             type: 'number',
-            defaultValue: 0x8000
+            persistedDefaultValue: 0x8000
         },
         port: {
             title: 'Port',
             description: 'TBD',
             type: 'number',
-            defaultValue: 5540
+            persistedDefaultValue: 5540
         },
         debug: {
             title: 'Debug Events',
@@ -88,6 +100,8 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
     });
 
     private matterServer: MatterServer | undefined;
+    private aggregator: Aggregator | undefined;
+
     devices = new Map<string, ScryptedDevice>();
 
     constructor(nativeId?: string) {
@@ -122,7 +136,7 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
         if (!contexts.length || !key.length) throw new StorageError("Context and key must not be empty strings!");
         const storageKey = this.buildStorageKey(contexts, key)
         const value = this.storageSettings.device.storage.getItem(storageKey);
-        if (value === null) return undefined;
+        if (!value || value === null) return undefined;
         return fromJson(value) as T;
     }
     set<T extends SupportedStorageTypes>(contexts: string[], key: string, value: T): void {
@@ -169,14 +183,14 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
 
         const port = this.storageSettings.values.port;
         const deviceName = "Scrypted";
-        const deviceType = DeviceTypes.Aggregator.code;
+        const deviceType = DeviceTypes.AGGREGATOR.code;
         const passcode = this.storageSettings.values.passcode;
         const discriminator = this.storageSettings.values.discriminator;
         const vendorName = "Scrypted";
         const vendorId = this.storageSettings.values.vendorId;
         const productName = "Scrypted";
         const productId = this.storageSettings.values.productId;
-        const uniqueId = this.nativeId;
+        const uniqueId = this.id;
 
         /**
          * Create Matter Server and CommissioningServer Node
@@ -222,30 +236,18 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
          * like identify that can be implemented with the logic when these commands are called.
          */
 
-        const aggregator = new Aggregator();
+        this.aggregator = new Aggregator();
 
         for (const id of Object.keys(systemManager.getSystemState())) {
             const device = systemManager.getDeviceById(id);
             const status = await this.tryEnableMixin(device);
 
             if (status === DeviceMixinStatus.Setup || status === DeviceMixinStatus.AlreadySetup) {
-                const supportedType = supportedTypes.get(device.type);
-                const matterDevice = await supportedType.discover(device);
-
-                aggregator.addBridgedDevice(matterDevice, {
-                    nodeLabel: device.name,
-                    productName: device.info?.manufacturer ?? undefined,
-                    productLabel: device.info?.model ?? undefined,
-                    serialNumber: device.info?.serialNumber ?? undefined,
-                    hardwareVersionString: device.info?.version ?? undefined,
-                    softwareVersionString: device.info?.firmware ?? undefined,
-                    productUrl: device.info?.managementUrl ?? undefined,
-                    reachable: true
-                });
+                await this.addDevice(device);
             }
         }
 
-        commissioningServer.addDevice(aggregator);
+        commissioningServer.addDevice(this.aggregator);
         this.matterServer.addCommissioningServer(commissioningServer);
 
         /**
@@ -270,6 +272,9 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
             const pairingData = commissioningServer.getPairingCode();
             const { qrCode, qrPairingCode, manualPairingCode } = pairingData;
 
+            this.storageSettings.values.qrPairingCode = qrPairingCode;
+            this.storageSettings.values.manualPairingCode = manualPairingCode;
+
             this.console.log(qrCode);
             this.console.log(
                 `QR Code URL: https://project-chip.github.io/connectedhomeip/qrcode.html?data=${qrPairingCode}`,
@@ -279,36 +284,23 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
             this.console.log("Device is already commissioned. Waiting for controllers to connect ...");
         }
 
-        systemManager.listen((async (eventSource: ScryptedDevice | undefined, eventDetails: EventDetails, eventData: any) => {
-            const status = await this.tryEnableMixin(eventSource);
+        systemManager.listen(this.deviceListen.bind(this));
+    }
 
-            if (status === DeviceMixinStatus.Setup) {
-                const device = eventSource;
-                const supportedType = supportedTypes.get(device.type);
-                const matterDevice = await supportedType.discover(device);
+    private async addDevice(device: ScryptedDevice) {
+        const supportedType = supportedTypes.get(device.type);
+        const matterDevice = await supportedType.discover(device);
 
-                aggregator.addBridgedDevice(matterDevice, {
-                    nodeLabel: device.name,
-                    productName: device.info?.manufacturer ?? undefined,
-                    productLabel: device.info?.model ?? undefined,
-                    serialNumber: device.info?.serialNumber ?? undefined,
-                    hardwareVersionString: device.info?.version ?? undefined,
-                    softwareVersionString: device.info?.firmware ?? undefined,
-                    productUrl: device.info?.managementUrl ?? undefined,
-                    reachable: true
-                });
-            }
-
-            if (status === DeviceMixinStatus.Setup || status === DeviceMixinStatus.AlreadySetup) {  
-
-                if (!this.devices.has(eventSource.id)) {
-                    this.devices.set(eventSource.id, eventSource);
-                    eventSource.listen(ScryptedInterface.ObjectDetector, this.deviceListen.bind(this));
-                }
-
-                this.deviceListen(eventSource, eventDetails, eventData);
-            }
-        }).bind(this));
+        this.aggregator.addBridgedDevice(matterDevice, {
+            nodeLabel: device.name,
+            productName: device.info?.manufacturer ?? undefined,
+            productLabel: device.info?.model ?? undefined,
+            serialNumber: device.info?.serialNumber?.substring(0, Math.min(device.info?.serialNumber.length, 31)) ?? undefined, // the max length of a serial number can be 32 characters
+            hardwareVersionString: device.info?.version ?? undefined,
+            softwareVersionString: device.info?.firmware ?? undefined,
+            productUrl: device.info?.managementUrl ?? undefined,
+            reachable: true
+        });
     }
 
     private async tryEnableMixin(device: ScryptedDevice): Promise<DeviceMixinStatus> {
@@ -365,27 +357,22 @@ class MatterPlugin extends ScryptedDeviceBase implements MixinProvider, Settings
         if (!eventSource)
             return;
 
-        if (!this.storageSettings.values.syncedDevices.includes(eventSource.id))
+        const supportedType = supportedTypes.get(eventSource.type);
+        const status = await this.tryEnableMixin(eventSource);
+
+        if (status === DeviceMixinStatus.NotSupported)
             return;
+        
+        if (status === DeviceMixinStatus.Setup) {
+            await this.addDevice(eventSource);
+        }
 
         if (eventDetails.eventInterface === ScryptedInterface.ScryptedDevice)
             return;
 
-        const supportedType = supportedTypes.get(eventSource.type);
-        if (!supportedType)
-            return;
+        let report = await supportedType.sendEvent(eventSource, eventDetails, eventData) ?? EventStatus.NotSupported;
 
-        let report = await supportedType.sendEvent(eventSource, eventDetails, eventData);
-
-        if (!report && eventDetails.eventInterface === ScryptedInterface.Online) {
-            report = {};
-        }
-
-        if (!report && eventDetails.eventInterface === ScryptedInterface.Battery) {
-            report = {};
-        }
-
-        if (!report) {
+        if (report === EventStatus.NotSupported) {
             this.console.warn(`${eventDetails.eventInterface}.${eventDetails.property} not supported for device ${eventSource.type}`);
             return;
         }
