@@ -46,7 +46,7 @@
     ]
   },
   "dependencies": {
-    "@project-chip/matter-node.js": "^0.5.0"
+    "@project-chip/matter-node.js": "^0.12.6"
   },
   "devDependencies": {
     "@scrypted/sdk": "^0.3.13",
